@@ -277,14 +277,18 @@ get_all_tests() {
 }
 
 filter_tests() {
-    local patterns=("$@")
+    local -a patterns=("$@")
     
     local all_tests
     all_tests=($(get_all_tests))
     
     local filtered_tests=()
     for test in "${all_tests[@]}"; do
-        if should_run_test "$test" "${patterns[@]}"; then
+        if [[ ${#patterns[@]} -gt 0 ]]; then
+            if should_run_test "$test" "${patterns[@]}"; then
+                filtered_tests+=("$test")
+            fi
+        elif should_run_test "$test"; then
             filtered_tests+=("$test")
         fi
     done
@@ -310,31 +314,24 @@ check_prerequisites() {
         exit 1
     fi
 
-    # Install or upgrade the gh-aw extension
+    # Ensure the gh aw command is available
     info "Checking gh-aw extension..."
-    
-    # Check if the extension is already installed
-    if gh extension list | grep -q "github/gh-aw"; then
-        info "gh-aw extension already installed, upgrading to latest version..."
-        if gh extension upgrade github/gh-aw &>> "$LOG_FILE"; then
-            success "gh-aw extension upgraded successfully"
-        else
-            warning "Failed to upgrade gh-aw extension, continuing with existing version"
-        fi
+
+    if gh aw --version >> "$LOG_FILE" 2>&1; then
+        success "gh-aw command is already available"
     else
         info "Installing gh-aw extension..."
-        if gh extension install github/gh-aw &>> "$LOG_FILE"; then
+        if gh extension install github/gh-aw >> "$LOG_FILE" 2>&1; then
             success "gh-aw extension installed successfully"
         else
             error "Failed to install gh-aw extension. Check $LOG_FILE for details"
             exit 1
         fi
-    fi
-    
-    # Verify the extension is available
-    if ! gh aw --version &>> "$LOG_FILE"; then
-        error "gh-aw extension is not available after installation"
-        exit 1
+
+        if ! gh aw --version >> "$LOG_FILE" 2>&1; then
+            error "gh-aw extension is not available after installation"
+            exit 1
+        fi
     fi
 
     # Check we're in the right repo
@@ -357,9 +354,9 @@ check_prerequisites() {
     git_status=$(git status --porcelain)
     if [[ -n "$git_status" ]]; then
         info "Detected changes after 'gh aw compile'; committing and pushing to main branch"
-        git add . &>> "$LOG_FILE"
-        git commit -m "chore: update compiled workflows via e2e.sh" &>> "$LOG_FILE"
-        if git push origin main &>> "$LOG_FILE"; then
+        git add . >> "$LOG_FILE" 2>&1
+        git commit -m "chore: update compiled workflows via e2e.sh" >> "$LOG_FILE" 2>&1
+        if git push origin main >> "$LOG_FILE" 2>&1; then
             success "Changes pushed to main branch"
         else
             error "Failed to push changes to main branch. Check $LOG_FILE for details"
@@ -399,7 +396,7 @@ disable_all_workflows_before_testing() {
         
         # Disable the workflow
         progress "  Disabling '$workflow_name' (currently $workflow_state)..."
-        if gh workflow disable "$workflow_name" &>> "$LOG_FILE"; then
+        if gh workflow disable "$workflow_name" >> "$LOG_FILE" 2>&1; then
             success "  ✓ Disabled '$workflow_name'"
             disabled_count=$((disabled_count + 1))
         else
@@ -500,7 +497,7 @@ disable_workflow() {
     local workflow_name="$1"
     
     info "Disabling workflow '$workflow_name'..."
-    gh aw disable "$workflow_name" &>> "$LOG_FILE"
+    gh aw disable "$workflow_name" >> "$LOG_FILE" 2>&1
     local rc=$?
     if [[ $rc -eq 0 ]]; then
         success "Successfully disabled '$workflow_name'"
@@ -528,7 +525,7 @@ trigger_workflow_dispatch_and_await_completion() {
     local before_run_id=$(get_latest_run_id "$workflow_file")
     
     # Trigger the workflow using gh aw run
-    if gh aw run "$workflow_name" &>> "$LOG_FILE"; then
+    if gh aw run "$workflow_name" >> "$LOG_FILE" 2>&1; then
         success "Successfully triggered '$workflow_name'"
         
         # Wait a bit for the new run to appear
@@ -1416,7 +1413,7 @@ main() {
     
     # Parse command line arguments
     local dry_run=false
-    local specific_tests=()
+    local -a specific_tests=()
     
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -1463,8 +1460,16 @@ main() {
         fi
         
         info "Tests:"
-        local workflows
-        readarray -t workflows < <(filter_tests "${specific_tests[@]}")
+        local -a workflows=()
+        if [[ ${#specific_tests[@]} -gt 0 ]]; then
+            while IFS= read -r workflow; do
+                [[ -n "$workflow" ]] && workflows+=("$workflow")
+            done < <(filter_tests "${specific_tests[@]}")
+        else
+            while IFS= read -r workflow; do
+                [[ -n "$workflow" ]] && workflows+=("$workflow")
+            done < <(filter_tests)
+        fi
         if [[ ${#workflows[@]} -gt 0 ]]; then
             for workflow in "${workflows[@]}"; do
                 echo "   - $workflow"
@@ -1487,7 +1492,11 @@ main() {
         info "🎯 Running specific tests: ${specific_tests[*]}"
     fi
     
-    run_tests "${specific_tests[@]}"
+    if [[ ${#specific_tests[@]} -gt 0 ]]; then
+        run_tests "${specific_tests[@]}"
+    else
+        run_tests
+    fi
     
     print_final_report
     
