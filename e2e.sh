@@ -1148,11 +1148,19 @@ wait_for_discussion_comment() {
 }
 
 run_tests() {
-    local patterns=("$@")
+    local -a patterns=("$@")
     info "🧪 Running tests..."
     
-    local workflows
-    readarray -t workflows < <(filter_tests "${patterns[@]}")
+    local -a workflows=()
+    if [[ ${#patterns[@]} -gt 0 ]]; then
+        while IFS= read -r workflow; do
+            [[ -n "$workflow" ]] && workflows+=("$workflow")
+        done < <(filter_tests "${patterns[@]}")
+    else
+        while IFS= read -r workflow; do
+            [[ -n "$workflow" ]] && workflows+=("$workflow")
+        done < <(filter_tests)
+    fi
     
     if [[ ${#workflows[@]} -eq 0 ]]; then
         warning "No tests match the specified patterns"
