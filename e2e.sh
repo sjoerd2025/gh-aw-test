@@ -1167,7 +1167,7 @@ run_tests() {
         return 0
     fi
     
-    local workflows_to_disable=()
+    local -a workflows_to_disable=()
     
     for workflow in "${workflows[@]}"; do
         progress "Testing workflow: $workflow"
@@ -1361,9 +1361,11 @@ run_tests() {
     done
     
     # Disable workflows after testing
-    for workflow in "${workflows_to_disable[@]}"; do
-        disable_workflow "$workflow" || warning "Failed to disable workflow '$workflow', continuing..."
-    done
+    if [[ ${#workflows_to_disable[@]} -gt 0 ]]; then
+        for workflow in "${workflows_to_disable[@]}"; do
+            disable_workflow "$workflow" || warning "Failed to disable workflow '$workflow', continuing..."
+        done
+    fi
 }
 
 print_final_report() {
